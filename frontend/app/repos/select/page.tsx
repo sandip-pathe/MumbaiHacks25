@@ -6,9 +6,12 @@ import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api-client";
 import { Loader2, Search, Lock, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { GitHubRepo } from "@/lib/types";
+import { useRequireAuth } from "@/lib/auth-context";
+import { ConnectionStatusBanner } from "@/components/ConnectionStatusBanner";
 
 function SelectReposPage() {
   const router = useRouter();
+  const auth = useRequireAuth();
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [selectedRepoIds, setSelectedRepoIds] = useState<Set<number>>(
     new Set()
@@ -20,16 +23,16 @@ function SelectReposPage() {
 
   useEffect(() => {
     const loadRepos = async () => {
-      const token = localStorage.getItem("github_access_token");
-      if (!token) {
-        router.push("/auth/signin"); // Fixed route
+      if (!auth.hasGitHub || !auth.githubAccessToken) {
+        setIsLoading(false);
         return;
       }
 
       try {
         setIsLoading(true);
-        const result = await apiClient.listUserRepos(token);
+        const result = await apiClient.listUserRepos(auth.githubAccessToken);
         setRepos(result.repos);
+        setError(null);
       } catch (err) {
         console.error("Failed to load repos:", err);
         setError(
@@ -40,8 +43,10 @@ function SelectReposPage() {
       }
     };
 
-    loadRepos();
-  }, [router]);
+    if (!auth.isLoading) {
+      loadRepos();
+    }
+  }, [auth.hasGitHub, auth.githubAccessToken, auth.isLoading]);
 
   // ... [Helper functions same as before] ...
   const handleToggleRepo = (repoId: number) => {
@@ -55,33 +60,28 @@ function SelectReposPage() {
   };
 
   const handleIndexRepos = async () => {
-    if (selectedRepoIds.size === 0) return;
-
-    const token = localStorage.getItem("github_access_token");
-    if (!token) return;
+    if (selectedRepoIds.size === 0 || !auth.githubAccessToken) return;
 
     try {
       setIsIndexing(true);
       const result = await apiClient.indexRepositories(
-        token,
+        auth.githubAccessToken,
         Array.from(selectedRepoIds)
       );
-      // Type guard for job_ids
-      if (
-        "job_ids" in result &&
-        Array.isArray(result.job_ids) &&
-        result.job_ids.length > 0
-      ) {
-        localStorage.setItem("current_job_id", result.job_ids[0]);
-        // Optionally store all job_ids if needed
-        // localStorage.setItem("current_job_ids", JSON.stringify(result.job_ids));
+
+      if (result && result.message) {
+        // Store job info and redirect to status page
+        localStorage.setItem(
+          "indexing_repos",
+          JSON.stringify(Array.from(selectedRepoIds))
+        );
         router.push("/repos/status");
       } else {
-        setError("No job IDs returned from backend.");
+        setError("Failed to start indexing. Please try again.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to index repos:", err);
-      setError("Failed to start indexing. Please try again.");
+      setError(err.message || "Failed to start indexing. Please try again.");
     } finally {
       setIsIndexing(false);
     }
@@ -90,6 +90,14 @@ function SelectReposPage() {
   const filteredRepos = repos.filter((repo) =>
     repo.full_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (auth.isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-black">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-gray-100">
@@ -106,13 +114,15 @@ function SelectReposPage() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <h1 className="text-xl font-semibold text-white">
-              Import Repositories
+              Select Repositories
             </h1>
           </div>
         </div>
       </nav>
 
       <main className="container mx-auto px-6 py-8 max-w-4xl">
+        {/* Connection Banner */}
+        {!auth.hasGitHub && <ConnectionStatusBanner />}
         {/* Search Box */}
         <div className="mb-6">
           <div className="relative">
@@ -197,22 +207,28 @@ function SelectReposPage() {
         </div>
 
         {/* Footer Action */}
-        <div className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a] border-t border-[#222] p-4 flex justify-end container mx-auto max-w-4xl">
-          <Button
-            size="lg"
-            onClick={handleIndexRepos}
-            disabled={selectedRepoIds.size === 0 || isIndexing}
-            className="bg-white text-black hover:bg-gray-200 min-w-[150px]"
-          >
-            {isIndexing ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Indexing...
-              </>
-            ) : (
-              `Import ${selectedRepoIds.size} Repositories`
-            )}
-          </Button>
+        <div className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a] border-t border-[#222] p-4">
+          <div className="container mx-auto max-w-4xl flex justify-end">
+            <Button
+              size="lg"
+              onClick={handleIndexRepos}
+              disabled={
+                selectedRepoIds.size === 0 || isIndexing || !auth.hasGitHub
+              }
+              className="bg-white text-black hover:bg-gray-200 min-w-[200px]"
+            >
+              {isIndexing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Starting Indexing...
+                </>
+              ) : (
+                `Index ${selectedRepoIds.size} ${
+                  selectedRepoIds.size === 1 ? "Repository" : "Repositories"
+                }`
+              )}
+            </Button>
+          </div>
         </div>
       </main>
     </div>

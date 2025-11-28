@@ -1,129 +1,99 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { IndexingLogs } from "@/components/IndexingLogs";
 import {
   Loader2,
   CheckCircle,
   Clock,
   AlertCircle,
   ArrowLeft,
-  Shield,
 } from "lucide-react";
+import { useRequireAuth } from "@/lib/auth-context";
+import { apiClient } from "@/lib/api-client";
 
 interface IndexedRepo {
   id: number;
   full_name: string;
-  status: "queued" | "indexing" | "completed" | "failed";
-}
-
-interface AgentLog {
-  agent: string;
-  message: string;
-  timestamp: string;
-  ts_epoch: number;
-}
-
-interface JobStatus {
-  job_id: string;
-  job_type: string;
-  status: "queued" | "running" | "completed" | "failed";
-  result?: any;
-  error?: string;
-  created_at?: string;
-  started_at?: string;
-  completed_at?: string;
+  status: "pending" | "indexing" | "indexed" | "failed";
+  chunks_count: number;
+  last_indexed: string | null;
 }
 
 export default function ReposStatusPage() {
   const router = useRouter();
+  const auth = useRequireAuth();
+  const searchParams = useSearchParams();
   const [repos, setRepos] = useState<IndexedRepo[]>([]);
-  const [scanLogs, setScanLogs] = useState<AgentLog[]>([]);
-  const [scanId, setScanId] = useState<string>("");
-  const [jobId, setJobId] = useState<string>("");
-  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [allCompleted, setAllCompleted] = useState(false);
 
+  // Poll for repo status
   useEffect(() => {
-    const token = localStorage.getItem("github_access_token");
-    if (!token) {
-      router.push("/handler/sign-in");
+    if (!auth.hasGitHub || !auth.githubAccessToken) {
+      setLoading(false);
       return;
     }
-    // Fetch actual repo status from backend
-    const fetchRepos = async () => {
+
+    const fetchRepoStatuses = async () => {
       try {
-        const res = await fetch("http://localhost:8000/user/repos", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Map backend response to IndexedRepo[]
-          const repoList = (data.repos || []).map((repo: any) => ({
-            id: repo.id,
-            full_name: repo.full_name,
-            status: repo.status || "queued", // Use actual status if available
-          }));
-          setRepos(repoList);
-        }
-      } catch (e) {
-        // Optionally log error
+        const result = await apiClient.listUserRepos(auth.githubAccessToken!);
+        const repoStatuses: IndexedRepo[] = await Promise.all(
+          result.repos.map(async (repo) => {
+            try {
+              const status = await apiClient.getRepoStatus(
+                repo.id,
+                auth.githubAccessToken!
+              );
+              return {
+                id: repo.id,
+                full_name: repo.full_name,
+                status: status.status,
+                chunks_count: status.chunks_count,
+                last_indexed: status.last_indexed,
+              };
+            } catch {
+              return {
+                id: repo.id,
+                full_name: repo.full_name,
+                status: "pending" as const,
+                chunks_count: 0,
+                last_indexed: null,
+              };
+            }
+          })
+        );
+
+        setRepos(repoStatuses);
+
+        // Check if all are completed
+        const completed = repoStatuses.every((r) => r.status === "indexed");
+        setAllCompleted(completed);
+        setLoading(false);
+      } catch (error) {
+        console.error("Failed to fetch repo statuses:", error);
+        setLoading(false);
       }
     };
-    fetchRepos();
 
-    const storedScanId = localStorage.getItem("current_scan_id");
-    if (storedScanId) setScanId(storedScanId);
+    fetchRepoStatuses();
 
-    const storedJobId = localStorage.getItem("current_job_id");
-    if (storedJobId) setJobId(storedJobId);
-  }, [router]);
-
-  useEffect(() => {
-    if (!scanId) return;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(
-          `http://localhost:8000/analyze/scan/${scanId}/logs`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setScanLogs(data.logs || []);
-        }
-      } catch (e) {
-        // Optionally log error
-      }
-    }, 2000);
+    // Poll every 3 seconds
+    const interval = setInterval(fetchRepoStatuses, 3000);
     return () => clearInterval(interval);
-  }, [scanId]);
-
-  useEffect(() => {
-    if (!jobId) return;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`http://localhost:8000/jobs/${jobId}/status`);
-        if (res.ok) {
-          const data = await res.json();
-          setJobStatus(data);
-        }
-      } catch (e) {
-        // Optionally log error
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [jobId]);
+  }, [auth.hasGitHub, auth.githubAccessToken]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "completed":
-        return <CheckCircle className="h-5 w-5 text-green-600" />;
+      case "indexed":
+        return <CheckCircle className="h-5 w-5 text-green-500" />;
       case "indexing":
-        return <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />;
-      case "queued":
+        return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
+      case "pending":
         return <Clock className="h-5 w-5 text-gray-400" />;
       case "failed":
-        return <AlertCircle className="h-5 w-5 text-red-600" />;
+        return <AlertCircle className="h-5 w-5 text-red-500" />;
       default:
         return <Clock className="h-5 w-5 text-gray-400" />;
     }
@@ -131,12 +101,12 @@ export default function ReposStatusPage() {
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case "completed":
+      case "indexed":
         return "Indexed";
       case "indexing":
         return "Indexing...";
-      case "queued":
-        return "Queued";
+      case "pending":
+        return "Pending";
       case "failed":
         return "Failed";
       default:
@@ -144,113 +114,111 @@ export default function ReposStatusPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-50 text-green-700 border-green-200";
-      case "indexing":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-      case "queued":
-        return "bg-gray-50 text-gray-700 border-gray-200";
-      case "failed":
-        return "bg-red-50 text-red-700 border-red-200";
-      default:
-        return "bg-gray-50 text-gray-700 border-gray-200";
-    }
-  };
+  if (auth.isLoading || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-black">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-black">
       {/* Navigation */}
-      <nav className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+      <nav className="border-b border-[#333]">
+        <div className="container mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => router.push("/dashboard")}
+              className="text-gray-400 hover:text-white"
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div className="flex items-center gap-2">
-              <Shield className="h-6 w-6 text-blue-600" />
-              <span className="font-bold text-xl">Indexing Status</span>
-            </div>
+            <h1 className="text-xl font-semibold text-white">
+              Indexing Status
+            </h1>
           </div>
+          {allCompleted && (
+            <Button
+              onClick={() => router.push("/repos/scan")}
+              className="bg-white text-black hover:bg-gray-200"
+              disabled={!auth.hasAllConnections}
+            >
+              Start Compliance Scan
+            </Button>
+          )}
         </div>
       </nav>
 
-      <main className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-          <h2 className="font-semibold text-blue-900 mb-2">
-            Indexing in Progress
+      <main className="container mx-auto px-6 py-8 max-w-4xl">
+        <div className="bg-blue-950/20 border border-blue-900/30 rounded-xl p-6 mb-6">
+          <h2 className="font-semibold text-blue-400 mb-2">
+            {allCompleted ? "Indexing Complete!" : "Indexing in Progress"}
           </h2>
-          <p className="text-sm text-blue-800">
-            Your repositories are being analyzed. This may take a few minutes
-            depending on the size of your codebase. You&apos;ll receive a
-            notification when the analysis is complete.
+          <p className="text-sm text-blue-300/70">
+            {allCompleted
+              ? "All repositories have been indexed. You can now run a compliance scan."
+              : "Your repositories are being analyzed. This may take a few minutes depending on the size of your codebase."}
           </p>
         </div>
 
         <div className="space-y-4">
-          {repos.map((repo) => (
-            <div
-              key={repo.id}
-              className={`rounded-lg p-6 border ${getStatusColor(repo.status)}`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {getStatusIcon(repo.status)}
-                  <div>
-                    <h3 className="font-semibold">{repo.full_name}</h3>
-                    <p className="text-sm opacity-75">
-                      {getStatusText(repo.status)}
-                    </p>
+          {repos.length === 0 ? (
+            <div className="bg-[#111] border border-[#333] rounded-xl p-8 text-center">
+              <p className="text-gray-400">No repositories found</p>
+              <Button
+                onClick={() => router.push("/repos/select")}
+                className="mt-4 bg-white text-black hover:bg-gray-200"
+              >
+                Select Repositories
+              </Button>
+            </div>
+          ) : (
+            repos.map((repo) => (
+              <div
+                key={repo.id}
+                className="bg-[#111] border border-[#333] rounded-xl p-6"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    {getStatusIcon(repo.status)}
+                    <div>
+                      <h3 className="font-semibold text-white">
+                        {repo.full_name}
+                      </h3>
+                      <p className="text-sm text-gray-400">
+                        {getStatusText(repo.status)}
+                        {repo.chunks_count > 0 &&
+                          ` • ${repo.chunks_count} chunks indexed`}
+                      </p>
+                    </div>
                   </div>
+                  {repo.status === "indexed" && (
+                    <div className="text-right">
+                      <CheckCircle className="h-8 w-8 text-green-500" />
+                    </div>
+                  )}
                 </div>
-                {repo.status === "completed" && (
-                  <Button variant="outline" size="sm">
-                    View Results
-                  </Button>
+                {repo.status === "indexing" && (
+                  <div className="mt-4">
+                    <div className="h-2 bg-[#222] rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 animate-pulse w-2/3"></div>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
-
-        {/* Agent Logs Section */}
-        <div className="mt-8">
-          <IndexingLogs
-            jobId={jobId}
-            className="bg-white border rounded-xl overflow-hidden shadow-lg"
-          />
-        </div>
-
-        {/* Job Status Section */}
-        {jobStatus && (
-          <div className="mt-8 bg-white border rounded-lg p-6">
-            <h3 className="font-semibold text-blue-900 mb-4">Job Status</h3>
-            <div className="flex items-center gap-4">
-              <span className="font-mono text-xs text-blue-600">
-                {jobStatus.status}
-              </span>
-              {jobStatus.error && (
-                <span className="text-xs text-red-600">
-                  Error: {jobStatus.error}
-                </span>
-              )}
-            </div>
-            {jobStatus.completed_at && (
-              <div className="text-xs text-gray-500 mt-2">
-                Completed at:{" "}
-                {new Date(jobStatus.completed_at).toLocaleString()}
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="mt-8 text-center">
-          <Button variant="outline" onClick={() => router.push("/dashboard")}>
+          <Button
+            variant="outline"
+            onClick={() => router.push("/dashboard")}
+            className="border-[#333] text-gray-300 hover:bg-[#1a1a1a]"
+          >
             Back to Dashboard
           </Button>
         </div>
