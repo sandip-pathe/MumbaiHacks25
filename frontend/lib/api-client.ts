@@ -246,4 +246,219 @@ export const apiClient = {
     if (!res.ok) throw new Error("Failed to create Jira ticket");
     return res.json() as Promise<{ ticket_id: string; ticket_url: string }>;
   },
+
+  // --- Jira OAuth 2.0 Integration ---
+
+  async getJiraAuthUrl(userId: string) {
+    const res = await fetch(
+      `${API_URL}/jira/connect?user_id=${encodeURIComponent(userId)}`
+    );
+    if (!res.ok) throw new Error("Failed to get Jira auth URL");
+    return res.json() as Promise<{ authorization_url: string }>;
+  },
+
+  async getJiraStatus(userId: string) {
+    const res = await fetch(
+      `${API_URL}/jira/status?user_id=${encodeURIComponent(userId)}`
+    );
+    if (!res.ok) return { connected: false };
+    return res.json() as Promise<{
+      connected: boolean;
+      site_url?: string;
+      site_name?: string;
+      expires_at?: string;
+    }>;
+  },
+
+  async disconnectJira(userId: string) {
+    const res = await fetch(
+      `${API_URL}/jira/disconnect?user_id=${encodeURIComponent(userId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+    if (!res.ok) throw new Error("Failed to disconnect Jira");
+    return res.json();
+  },
+
+  async createJiraTicketFromViolation(data: {
+    user_id: string;
+    violation_id: string;
+    project_key: string;
+    issue_type: string;
+    priority: string;
+    assignee?: string;
+  }) {
+    const res = await fetch(`${API_URL}/jira/tickets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to create Jira ticket");
+    return res.json() as Promise<{
+      id: string;
+      jira_ticket_id: string;
+      jira_ticket_key: string;
+      jira_ticket_url: string;
+      status: string;
+    }>;
+  },
+
+  async bulkCreateJiraTickets(data: {
+    user_id: string;
+    case_id: string;
+    project_key: string;
+    issue_type: string;
+    priority: string;
+  }) {
+    const res = await fetch(`${API_URL}/jira/tickets/bulk-create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to bulk create Jira tickets");
+    return res.json() as Promise<{
+      created_count: number;
+      tickets: Array<{
+        jira_ticket_key: string;
+        jira_ticket_url: string;
+      }>;
+    }>;
+  },
+
+  // --- MCP Orchestration & Scanning ---
+
+  async runAudit(repoId: string, userId: string) {
+    const res = await fetch(`${API_URL}/mcp/run_audit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo_id: repoId, user_id: userId }),
+    });
+    if (!res.ok) throw new Error("Failed to start audit");
+    return res.json() as Promise<{
+      case_id: string;
+      status: string;
+      message: string;
+    }>;
+  },
+
+  async getAuditStatus(caseId: string) {
+    const res = await fetch(`${API_URL}/mcp/audit_status/${caseId}`);
+    if (!res.ok) throw new Error("Failed to get audit status");
+    return res.json() as Promise<{
+      case_id: string;
+      repo_id: string;
+      status: "pending" | "running" | "completed" | "failed" | "hitl_review";
+      current_step: number;
+      workflow_steps: string[];
+      agent_outputs: Record<string, any>;
+      violations_found: number;
+      hitl_approved: boolean | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+  },
+
+  async resumeAudit(caseId: string) {
+    const res = await fetch(`${API_URL}/mcp/resume_audit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ case_id: caseId }),
+    });
+    if (!res.ok) throw new Error("Failed to resume audit");
+    return res.json();
+  },
+
+  // --- HITL Review Tools ---
+
+  async explainViolation(violationId: string, userQuery?: string) {
+    const res = await fetch(`${API_URL}/hitl/explain`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        violation_id: violationId,
+        user_query: userQuery || "Explain this violation in detail",
+      }),
+    });
+    if (!res.ok) throw new Error("Failed to get explanation");
+    return res.json() as Promise<{
+      violation_id: string;
+      explanation: string;
+    }>;
+  },
+
+  async suggestFix(violationId: string) {
+    const res = await fetch(`${API_URL}/hitl/suggest_fix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ violation_id: violationId }),
+    });
+    if (!res.ok) throw new Error("Failed to get fix suggestion");
+    return res.json() as Promise<{
+      violation_id: string;
+      suggested_code: string;
+      explanation: string;
+    }>;
+  },
+
+  async submitReviewDecision(data: {
+    violation_id: string;
+    decision: "approve" | "reject" | "needs_revision";
+    reviewer_note?: string;
+  }) {
+    const res = await fetch(`${API_URL}/hitl/review_decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to submit review decision");
+    return res.json();
+  },
+
+  async getPendingReviews() {
+    const res = await fetch(`${API_URL}/hitl/pending_reviews`);
+    if (!res.ok) throw new Error("Failed to get pending reviews");
+    return res.json() as Promise<
+      Array<{
+        violation_id: string;
+        rule_id: string;
+        severity: string;
+        file_path: string;
+        explanation: string;
+      }>
+    >;
+  },
+
+  // --- Job Status ---
+
+  async getJobStatus(jobId: string) {
+    const res = await fetch(`${API_URL}/jobs/${jobId}/status`);
+    if (!res.ok) throw new Error("Failed to get job status");
+    return res.json() as Promise<{
+      job_id: string;
+      status: "pending" | "running" | "completed" | "failed";
+      progress: number;
+      result: any;
+      error: string | null;
+    }>;
+  },
+
+  // --- GitHub Connection (separate from primary auth) ---
+
+  async connectGitHub(code: string, redirectUri: string) {
+    const res = await fetch(`${API_URL}/user/auth/github/callback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    });
+    if (!res.ok) throw new Error("Failed to connect GitHub");
+    return res.json() as Promise<{
+      access_token: string;
+      user: {
+        login: string;
+        avatar_url: string;
+        name: string | null;
+      };
+    }>;
+  },
 };
