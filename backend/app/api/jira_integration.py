@@ -62,11 +62,18 @@ async def jira_oauth_callback(
     # Verify state
     user_id = oauth_states.get(state)
     if not user_id:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+        logger.error(f"Invalid OAuth state: {state}")
+        return RedirectResponse(
+            url="http://localhost:3000/settings/connections?jira_error=invalid_state",
+            status_code=302
+        )
     
     try:
+        logger.info(f"Processing Jira OAuth callback for user {user_id}")
+        
         # Exchange code for token
         token_data = await jira_client.exchange_code_for_token(code)
+        logger.info(f"Token exchange successful")
         
         # Get accessible Jira sites
         resources = await jira_client.get_accessible_resources(
@@ -74,10 +81,15 @@ async def jira_oauth_callback(
         )
         
         if not resources:
-            raise HTTPException(status_code=400, detail="No Jira sites accessible")
+            logger.error("No Jira sites accessible")
+            return RedirectResponse(
+                url="http://localhost:3000/settings/connections?jira_error=no_sites",
+                status_code=302
+            )
         
         # Use first accessible site
         site = resources[0]
+        logger.info(f"Using Jira site: {site['name']}")
         
         # Store credentials
         await jira_service.store_credentials(
@@ -93,14 +105,20 @@ async def jira_oauth_callback(
         # Clean up state
         del oauth_states[state]
         
-        logger.info(f"Jira connected for user {user_id}: {site['name']}")
+        logger.info(f"Jira connected successfully for user {user_id}: {site['name']}")
         
         # Redirect to frontend success page
-        return RedirectResponse(url=f"http://localhost:3000/dashboard?jira_connected=true")
+        return RedirectResponse(
+            url="http://localhost:3000/settings/connections?jira_connected=true",
+            status_code=302
+        )
         
     except Exception as e:
-        logger.error(f"Jira OAuth failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Jira OAuth failed: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=f"http://localhost:3000/settings/connections?jira_error={str(e)[:100]}",
+            status_code=302
+        )
 
 
 @router.get("/status", response_model=JiraConnectionStatus)
