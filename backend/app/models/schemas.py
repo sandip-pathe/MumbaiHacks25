@@ -409,3 +409,47 @@ class GenerateReportResponse(BaseModel):
     format: str
     download_url: Optional[str] = None
     content: Optional[str] = None
+
+
+# --- JIRA INTEGRATION SCHEMAS ---
+
+class JiraCredentials(BaseModel):
+    """Jira OAuth credentials."""
+    user_id: str
+    access_token: str
+    refresh_token: Optional[str] = None
+    cloud_id: str
+    site_url: str
+    expires_at: datetime
+
+
+class JiraTicketCreate(BaseModel):
+    """Request to create Jira ticket."""
+    violation_id: str
+    project_key: str = "COMP"
+    issue_type: str = "Bug"
+    priority: str = "Medium"
+    assignee: Optional[str] = None
+
+
+class JiraTicketResponse(BaseModel):
+    """Jira ticket response."""
+    ticket_id: str
+    ticket_key: str
+    ticket_url: str
+    status: str
+    created_at: datetime
+
+
+class JiraOAuthCallback(BaseModel):
+    """OAuth callback data."""
+    code: str
+    state: str
+
+
+class JiraConnectionStatus(BaseModel):
+    """Jira connection status."""
+    connected: bool
+    site_url: Optional[str] = None
+    site_name: Optional[str] = None
+    expires_at: Optional[datetime] = None

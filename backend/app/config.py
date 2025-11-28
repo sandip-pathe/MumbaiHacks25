@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     github_oauth_client_secret: str = Field(..., description="GitHub OAuth App Client Secret")
     github_oauth_redirect_uri: str = Field(..., description="GitHub OAuth App Redirect URI")
 
+    # Jira OAuth 2.0
+    jira_client_id: str = Field(default="", description="Jira OAuth Client ID")
+    jira_client_secret: str = Field(default="", description="Jira OAuth Client Secret")
+    jira_redirect_uri: str = Field(default="http://localhost:8000/api/jira/callback", description="Jira OAuth Redirect URI")
+
     # Azure OpenAI
     azure_openai_endpoint: Optional[str] = None
     azure_openai_key: Optional[str] = None

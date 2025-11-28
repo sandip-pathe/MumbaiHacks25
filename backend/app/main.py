@@ -21,8 +21,9 @@ from app.api import (
     violations,
     integrations,
     job_status,
-    mcp_server,    # MCP orchestration endpoints
-    hitl_review    # HITL reviewer tools
+    mcp_server,       # MCP orchestration endpoints
+    hitl_review,      # HITL reviewer tools
+    jira_integration  # Jira OAuth and ticket management
 )
 from app.config import get_settings
 from app.database import db
@@ -131,8 +132,9 @@ app.include_router(regulations.router)
 app.include_router(violations.router)
 app.include_router(integrations.router)
 app.include_router(job_status.router)
-app.include_router(mcp_server.router)    # MCP orchestration endpoints
-app.include_router(hitl_review.router)   # HITL reviewer tools
+app.include_router(mcp_server.router)       # MCP orchestration endpoints
+app.include_router(hitl_review.router)      # HITL reviewer tools
+app.include_router(jira_integration.router) # Jira OAuth and ticket management
 
 # Root endpoint
 @app.get("/")

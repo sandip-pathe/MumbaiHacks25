@@ -52,10 +52,13 @@ from fastapi import Query
 from app.config import get_settings
 
 @router.get("/github/callback")
-def github_callback(code: str = Query(...), state: str = Query(None)):
+def github_callback(code: str = Query(...), state: str = Query(None), redirect_uri: str = Query(None)):
     """
     Handles GitHub OAuth callback, exchanges code for access token.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     settings = get_settings()
     github_client_id = settings.github_oauth_client_id
     github_client_secret = settings.github_oauth_client_secret
@@ -65,23 +68,42 @@ def github_callback(code: str = Query(...), state: str = Query(None)):
         "client_id": github_client_id,
         "client_secret": github_client_secret,
         "code": code,
-        "state": state,
     }
+    # GitHub OAuth requires the redirect_uri to match what was used in authorization
+    if redirect_uri:
+        data["redirect_uri"] = redirect_uri
+    
+    logger.info(f"Exchanging GitHub code (length: {len(code)}) with redirect_uri: {redirect_uri}")
+    
     resp = requests.post(token_url, headers=headers, data=data)
     if not resp.ok:
+        logger.error(f"GitHub token exchange HTTP error: {resp.status_code} - {resp.text}")
         raise HTTPException(status_code=400, detail=f"GitHub token exchange failed: {resp.text}")
+    
     token_data = resp.json()
+    logger.info(f"GitHub token exchange response keys: {list(token_data.keys())}")
+    
+    # Check for error in response
+    if "error" in token_data:
+        error_msg = token_data.get('error_description', token_data.get('error'))
+        logger.error(f"GitHub OAuth error: {error_msg}")
+        raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {error_msg}")
+    
     access_token = token_data.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=400, detail="No access token returned from GitHub")
-    # Optionally: fetch user info
+        logger.error(f"No access token in response: {token_data}")
+        raise HTTPException(status_code=400, detail=f"No access token returned from GitHub. Response: {token_data}")
+    
+    # Fetch user info
     user_resp = requests.get(
         "https://api.github.com/user",
         headers={"Authorization": f"token {access_token}"}
     )
     if not user_resp.ok:
+        logger.error(f"Failed to fetch GitHub user: {user_resp.status_code} - {user_resp.text}")
         raise HTTPException(status_code=400, detail="Failed to fetch GitHub user info")
     user_data = user_resp.json()
+    logger.info(f"Successfully authenticated GitHub user: {user_data.get('login')}")
     return {"access_token": access_token, "user": user_data}
 
 def neon_query(sql: str, params=None):
