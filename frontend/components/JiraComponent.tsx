@@ -1,31 +1,57 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle, Link as LinkIcon } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { apiClient } from "@/lib/api-client";
 
 export function JiraIntegration() {
-  const [isConnected, setIsConnected] = useState(false);
+  const { hasJira, userEmail, setJiraConnection } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [config, setConfig] = useState({
-    domain: "",
-    email: "",
-    apiToken: "",
-    projectKey: "COMP",
-  });
+  const [jiraStatus, setJiraStatus] = useState<any>(null);
 
-  const handleConnect = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (hasJira && userEmail) {
+      apiClient
+        .getJiraStatus(userEmail)
+        .then((data) => {
+          if (data.connected) {
+            setJiraStatus(data);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [hasJira, userEmail]);
+
+  const handleConnect = async () => {
+    if (!userEmail) return;
+
     setLoading(true);
-
-    // Simulate API call
-    setTimeout(() => {
-      setIsConnected(true);
+    try {
+      const result = await apiClient.getJiraAuthUrl(userEmail);
+      window.location.href = result.authorization_url;
+    } catch (error) {
+      console.error("Failed to initiate Jira connection:", error);
       setLoading(false);
-    }, 1500);
+    }
   };
 
-  if (isConnected) {
+  const handleDisconnect = async () => {
+    if (!userEmail) return;
+
+    if (confirm("Are you sure you want to disconnect Jira?")) {
+      try {
+        await apiClient.disconnectJira(userEmail);
+        setJiraConnection(false);
+        setJiraStatus(null);
+      } catch (error) {
+        console.error("Failed to disconnect Jira:", error);
+      }
+    }
+  };
+
+  if (hasJira && jiraStatus) {
     return (
       <div className="bg-[#111] border border-green-900/30 rounded-xl p-6 flex items-center justify-between animate-in fade-in">
         <div className="flex items-center gap-4">
@@ -35,13 +61,15 @@ export function JiraIntegration() {
           <div>
             <h3 className="text-white font-semibold">Jira Connected</h3>
             <p className="text-sm text-gray-400">
-              Syncing with project {config.projectKey}
+              {jiraStatus.site_name ||
+                jiraStatus.site_url ||
+                "Connected to Jira"}
             </p>
           </div>
         </div>
         <Button
           variant="outline"
-          onClick={() => setIsConnected(false)}
+          onClick={handleDisconnect}
           className="border-red-900/30 text-red-400 hover:bg-red-950/30 hover:text-red-300"
         >
           Disconnect
@@ -64,77 +92,40 @@ export function JiraIntegration() {
         </div>
       </div>
 
-      <form onSubmit={handleConnect} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-300">
-              Jira Domain
-            </label>
-            <input
-              placeholder="company.atlassian.net"
-              value={config.domain}
-              onChange={(e) => setConfig({ ...config, domain: e.target.value })}
-              className="w-full h-10 px-3 bg-[#0a0a0a] border border-[#333] rounded-md text-white focus:outline-none focus:border-blue-600"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-300">
-              Project Key
-            </label>
-            <input
-              placeholder="COMP"
-              value={config.projectKey}
-              onChange={(e) =>
-                setConfig({ ...config, projectKey: e.target.value })
-              }
-              className="w-full h-10 px-3 bg-[#0a0a0a] border border-[#333] rounded-md text-white focus:outline-none focus:border-blue-600"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-300">Email</label>
-          <input
-            type="email"
-            placeholder="admin@company.com"
-            value={config.email}
-            onChange={(e) => setConfig({ ...config, email: e.target.value })}
-            className="w-full h-10 px-3 bg-[#0a0a0a] border border-[#333] rounded-md text-white focus:outline-none focus:border-blue-600"
-            required
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-300">API Token</label>
-          <input
-            type="password"
-            placeholder="••••••••••••••••"
-            value={config.apiToken}
-            onChange={(e) => setConfig({ ...config, apiToken: e.target.value })}
-            className="w-full h-10 px-3 bg-[#0a0a0a] border border-[#333] rounded-md text-white focus:outline-none focus:border-blue-600"
-            required
-          />
-        </div>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-400">
+          Connect your Jira workspace using OAuth 2.0 to:
+        </p>
+        <ul className="text-sm text-gray-500 space-y-2 ml-4">
+          <li>• Automatically create tickets for violations</li>
+          <li>• Track remediation progress in Jira</li>
+          <li>• Sync ticket status back to Anaya</li>
+        </ul>
 
         <div className="pt-2">
           <Button
-            type="submit"
-            className="w-full bg-white text-black hover:bg-gray-200"
+            onClick={handleConnect}
+            className="w-full bg-blue-600 text-white hover:bg-blue-700"
             disabled={loading}
           >
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Connecting...
+                Redirecting to Jira...
               </>
             ) : (
-              "Connect Integration"
+              <>
+                <LinkIcon className="mr-2 h-4 w-4" />
+                Connect with Jira
+              </>
             )}
           </Button>
         </div>
-      </form>
+
+        <p className="text-xs text-gray-600 text-center">
+          You'll be redirected to Atlassian to authorize the app
+        </p>
+      </div>
     </div>
   );
 }
