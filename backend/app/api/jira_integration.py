@@ -1,0 +1,246 @@
+"""
+Jira Integration API Endpoints
+OAuth 2.0 authentication and ticket management
+"""
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import RedirectResponse
+from typing import Optional
+import secrets
+from loguru import logger
+from uuid import UUID
+
+from app.core.jira_client import jira_client
+from app.services.jira_service import jira_service
+from app.models.schemas import (
+    JiraTicketCreate,
+    JiraTicketResponse,
+    JiraConnectionStatus,
+    SuccessResponse
+)
+
+router = APIRouter(prefix="/jira", tags=["Jira Integration"])
+
+# OAuth state storage (in production, use Redis)
+oauth_states = {}
+
+
+def get_current_user_id() -> str:
+    """Mock user ID - replace with actual auth in production"""
+    # TODO: Integrate with your auth system
+    return "default_user"
+
+
+@router.get("/connect")
+async def initiate_jira_oauth(user_id: str = Depends(get_current_user_id)):
+    """
+    Initiate Jira OAuth flow
+    
+    Returns authorization URL for user to login to Jira
+    """
+    state = secrets.token_urlsafe(32)
+    oauth_states[state] = user_id
+    
+    auth_url = jira_client.get_authorization_url(state)
+    
+    return {
+        "authorization_url": auth_url,
+        "state": state,
+        "message": "Redirect user to authorization_url to complete OAuth"
+    }
+
+
+@router.get("/callback")
+async def jira_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...)
+):
+    """
+    Handle Jira OAuth callback
+    
+    Exchanges authorization code for access token
+    """
+    # Verify state
+    user_id = oauth_states.get(state)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    
+    try:
+        # Exchange code for token
+        token_data = await jira_client.exchange_code_for_token(code)
+        
+        # Get accessible Jira sites
+        resources = await jira_client.get_accessible_resources(
+            token_data['access_token']
+        )
+        
+        if not resources:
+            raise HTTPException(status_code=400, detail="No Jira sites accessible")
+        
+        # Use first accessible site
+        site = resources[0]
+        
+        # Store credentials
+        await jira_service.store_credentials(
+            user_id=user_id,
+            access_token=token_data['access_token'],
+            refresh_token=token_data['refresh_token'],
+            cloud_id=site['id'],
+            site_url=site['url'],
+            site_name=site['name'],
+            expires_in=token_data['expires_in']
+        )
+        
+        # Clean up state
+        del oauth_states[state]
+        
+        logger.info(f"Jira connected for user {user_id}: {site['name']}")
+        
+        # Redirect to frontend success page
+        return RedirectResponse(url=f"http://localhost:3000/dashboard?jira_connected=true")
+        
+    except Exception as e:
+        logger.error(f"Jira OAuth failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/status", response_model=JiraConnectionStatus)
+async def get_jira_status(user_id: str = Depends(get_current_user_id)):
+    """Check if user has connected Jira"""
+    credentials = await jira_service.get_credentials(user_id)
+    
+    if not credentials:
+        return JiraConnectionStatus(
+            connected=False,
+            site_url=None,
+            site_name=None,
+            expires_at=None
+        )
+    
+    return JiraConnectionStatus(
+        connected=True,
+        site_url=credentials['site_url'],
+        site_name=credentials['site_name'],
+        expires_at=credentials['expires_at']
+    )
+
+
+@router.post("/tickets", response_model=JiraTicketResponse)
+async def create_jira_ticket(
+    ticket_data: JiraTicketCreate,
+    case_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Create Jira ticket from a compliance violation
+    
+    - **violation_id**: ID of the compliance violation
+    - **project_key**: Jira project key (e.g., "COMP")
+    - **issue_type**: Bug, Task, Story, etc.
+    - **priority**: Blocker, Critical, Major, Minor, Trivial
+    - **assignee**: Jira account ID (optional)
+    """
+    try:
+        ticket = await jira_service.create_ticket_from_violation(
+            user_id=user_id,
+            violation_id=ticket_data.violation_id,
+            case_id=case_id or "unknown",
+            project_key=ticket_data.project_key,
+            issue_type=ticket_data.issue_type,
+            priority=ticket_data.priority,
+            assignee=ticket_data.assignee
+        )
+        
+        return ticket
+        
+    except Exception as e:
+        logger.error(f"Failed to create Jira ticket: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tickets/{ticket_id}/sync")
+async def sync_jira_ticket(
+    ticket_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Sync Jira ticket status back to our database"""
+    try:
+        result = await jira_service.sync_ticket_status(
+            user_id=user_id,
+            ticket_id=ticket_id
+        )
+        
+        return {
+            "ticket_id": ticket_id,
+            "status": result["status"],
+            "assignee": result["assignee"],
+            "synced_at": "now"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to sync ticket: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tickets")
+async def get_user_jira_tickets(
+    case_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get all Jira tickets for current user, optionally filtered by case"""
+    tickets = await jira_service.get_user_tickets(
+        user_id=user_id,
+        case_id=case_id
+    )
+    
+    return {"tickets": tickets, "count": len(tickets)}
+
+
+@router.post("/tickets/bulk-create", response_model=SuccessResponse)
+async def bulk_create_tickets(
+    case_id: str,
+    project_key: str,
+    issue_type: str = "Bug",
+    priority: str = "Medium",
+    user_id: str = Depends(get_current_user_id)
+):
+    """Create Jira tickets for all approved violations in a case"""
+    from app.database import db
+    
+    # Get all violations for case that need tickets
+    async with db.acquire() as conn:
+        violations = await conn.fetch("""
+            SELECT v.violation_id, v.explanation, v.severity 
+            FROM violations v
+            LEFT JOIN jira_tickets jt ON v.violation_id = jt.violation_id
+            WHERE v.scan_id IN (
+                SELECT scan_id FROM compliance_scans WHERE scan_id::text = $1
+            )
+            AND v.status = 'approved'
+            AND jt.id IS NULL
+        """, case_id)
+    
+    created_tickets = []
+    
+    for violation in violations:
+        try:
+            ticket = await jira_service.create_ticket_from_violation(
+                user_id=user_id,
+                violation_id=str(violation['violation_id']),
+                case_id=case_id,
+                project_key=project_key,
+                issue_type=issue_type,
+                priority=priority
+            )
+            created_tickets.append(ticket.dict())
+        except Exception as e:
+            logger.error(f"Failed to create ticket for {violation['violation_id']}: {str(e)}")
+            continue
+    
+    return SuccessResponse(
+        message=f"Created {len(created_tickets)} Jira tickets",
+        data={
+            "case_id": case_id,
+            "tickets_created": len(created_tickets),
+            "tickets": created_tickets
+        }
+    )
