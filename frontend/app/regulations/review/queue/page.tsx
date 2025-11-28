@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiClient, type Violation } from "@/lib/api-client";
-import { FindingCard } from "@/components/compliance/FindingCard";
+import { apiClient } from "@/lib/api-client";
+import { type Violation } from "@/lib/types";
+import { FindingCard } from "@/components/FindingCard";
 import { Button } from "@/components/ui/button";
 import { Loader2, Check, Filter } from "lucide-react";
 import { useStackApp } from "@stackframe/stack";

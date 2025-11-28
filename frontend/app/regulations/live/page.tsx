@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { apiClient, type ScrapeResult } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
+import { type ScrapeResult } from "@/lib/types";
 import { Activity, RefreshCw, ArrowLeft, Radio } from "lucide-react";
 
 function LiveFeedPage() {

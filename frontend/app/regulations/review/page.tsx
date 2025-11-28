@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { apiClient, type RegulationDoc } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
+import { type RegulationDoc } from "@/lib/types";
 import { ArrowLeft, Check, X, ExternalLink, Loader2 } from "lucide-react";
 
 function ReviewQueuePage() {
