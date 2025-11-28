@@ -95,7 +95,16 @@ export interface ScanStatus {
 }
 
 export interface AgentLog {
-  agent: "PLANNER" | "NAVIGATOR" | "INVESTIGATOR" | "JUDGE" | "JIRA";
+  agent:
+    | "PLANNER"
+    | "NAVIGATOR"
+    | "INVESTIGATOR"
+    | "JUDGE"
+    | "JIRA"
+    | "RULE_READER"
+    | "CODE_SCANNER"
+    | "RULE_MATCHER"
+    | "SYSTEM";
   message: string;
   timestamp: string;
   ts_epoch: number;
