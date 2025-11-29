@@ -80,6 +80,15 @@ class JiraService:
             
             return credentials
     
+    async def delete_credentials(self, user_id: str):
+        """Delete user's Jira credentials"""
+        async with db.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM jira_credentials WHERE user_id = $1
+            """, user_id)
+        
+        logger.info(f"Deleted Jira credentials for user {user_id}")
+    
     async def create_ticket_from_violation(
         self,
         user_id: str,

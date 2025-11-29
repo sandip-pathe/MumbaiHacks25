@@ -37,7 +37,7 @@ export default function DashboardPage() {
 
   if (auth.isLoading) {
     return (
-      <div className="p-8 max-w-7xl mx-auto">
+      <div className="p-8 max-w-7xl mx-auto space-y-8">
         <div className="animate-pulse space-y-8">
           <div className="h-8 bg-[#222] rounded w-1/4"></div>
           <div className="grid grid-cols-3 gap-6">

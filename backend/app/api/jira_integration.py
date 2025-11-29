@@ -18,7 +18,7 @@ from app.models.schemas import (
     SuccessResponse
 )
 
-router = APIRouter(prefix="/jira", tags=["Jira Integration"])
+router = APIRouter(prefix="/api/jira", tags=["Jira Integration"])
 
 # OAuth state storage (in production, use Redis)
 oauth_states = {}
@@ -55,18 +55,18 @@ async def jira_oauth_callback(
     state: str = Query(...)
 ):
     """
-    Handle Jira OAuth callback
+    Handle Jira OAuth callback - Returns JSON like GitHub OAuth
     
-    Exchanges authorization code for access token
+    Exchanges authorization code for access token and returns site info
     """
+    logger.info(f"=== Jira OAuth Callback Received ===")
+    logger.info(f"Code: {code[:20]}... State: {state[:20]}...")
+    
     # Verify state
     user_id = oauth_states.get(state)
     if not user_id:
         logger.error(f"Invalid OAuth state: {state}")
-        return RedirectResponse(
-            url="http://localhost:3000/settings/connections?jira_error=invalid_state",
-            status_code=302
-        )
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
     
     try:
         logger.info(f"Processing Jira OAuth callback for user {user_id}")
@@ -82,10 +82,7 @@ async def jira_oauth_callback(
         
         if not resources:
             logger.error("No Jira sites accessible")
-            return RedirectResponse(
-                url="http://localhost:3000/settings/connections?jira_error=no_sites",
-                status_code=302
-            )
+            raise HTTPException(status_code=400, detail="No Jira sites accessible")
         
         # Use first accessible site
         site = resources[0]
@@ -107,18 +104,17 @@ async def jira_oauth_callback(
         
         logger.info(f"Jira connected successfully for user {user_id}: {site['name']}")
         
-        # Redirect to frontend success page
-        return RedirectResponse(
-            url="http://localhost:3000/settings/connections?jira_connected=true",
-            status_code=302
-        )
+        # Return JSON response like GitHub OAuth
+        return {
+            "success": True,
+            "site_name": site['name'],
+            "site_url": site['url'],
+            "cloud_id": site['id']
+        }
         
     except Exception as e:
         logger.error(f"Jira OAuth failed: {str(e)}", exc_info=True)
-        return RedirectResponse(
-            url=f"http://localhost:3000/settings/connections?jira_error={str(e)[:100]}",
-            status_code=302
-        )
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/status", response_model=JiraConnectionStatus)
@@ -140,6 +136,18 @@ async def get_jira_status(user_id: str = Depends(get_current_user_id)):
         site_name=credentials['site_name'],
         expires_at=credentials['expires_at']
     )
+
+
+@router.delete("/disconnect")
+async def disconnect_jira(user_id: str = Depends(get_current_user_id)):
+    """Disconnect Jira integration for user"""
+    try:
+        await jira_service.delete_credentials(user_id)
+        logger.info(f"Jira disconnected for user {user_id}")
+        return {"message": "Jira disconnected successfully"}
+    except Exception as e:
+        logger.error(f"Failed to disconnect Jira: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tickets", response_model=JiraTicketResponse)

@@ -251,7 +251,7 @@ export const apiClient = {
 
   async getJiraAuthUrl(userId: string) {
     const res = await fetch(
-      `${API_URL}/jira/connect?user_id=${encodeURIComponent(userId)}`
+      `${API_URL}/api/jira/connect?user_id=${encodeURIComponent(userId)}`
     );
     if (!res.ok) throw new Error("Failed to get Jira auth URL");
     return res.json() as Promise<{ authorization_url: string }>;
@@ -259,7 +259,7 @@ export const apiClient = {
 
   async getJiraStatus(userId: string) {
     const res = await fetch(
-      `${API_URL}/jira/status?user_id=${encodeURIComponent(userId)}`
+      `${API_URL}/api/jira/status?user_id=${encodeURIComponent(userId)}`
     );
     if (!res.ok) return { connected: false };
     return res.json() as Promise<{
@@ -272,7 +272,7 @@ export const apiClient = {
 
   async disconnectJira(userId: string) {
     const res = await fetch(
-      `${API_URL}/jira/disconnect?user_id=${encodeURIComponent(userId)}`,
+      `${API_URL}/api/jira/disconnect?user_id=${encodeURIComponent(userId)}`,
       {
         method: "DELETE",
       }
@@ -289,7 +289,7 @@ export const apiClient = {
     priority: string;
     assignee?: string;
   }) {
-    const res = await fetch(`${API_URL}/jira/tickets`, {
+    const res = await fetch(`${API_URL}/api/jira/tickets`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
@@ -311,7 +311,7 @@ export const apiClient = {
     issue_type: string;
     priority: string;
   }) {
-    const res = await fetch(`${API_URL}/jira/tickets/bulk-create`, {
+    const res = await fetch(`${API_URL}/api/jira/tickets/bulk-create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),

@@ -21,7 +21,7 @@ class JiraOAuthClient:
     def __init__(self):
         self.client_id = getattr(settings, 'jira_client_id', '')
         self.client_secret = getattr(settings, 'jira_client_secret', '')
-        self.redirect_uri = getattr(settings, 'jira_redirect_uri', 'http://localhost:8000/api/jira/callback')
+        self.redirect_uri = getattr(settings, 'jira_redirect_uri', 'http://localhost:3000/settings/connections/jira/callback')
         
     def get_authorization_url(self, state: str) -> str:
         """Generate OAuth authorization URL for user to login"""
