@@ -11,6 +11,8 @@ from uuid import UUID
 
 from app.core.jira_client import jira_client
 from app.services.jira_service import jira_service
+from app.services.auth_service import auth_service
+from app.api.auth import get_current_user
 from app.models.schemas import (
     JiraTicketCreate,
     JiraTicketResponse,
@@ -24,19 +26,14 @@ router = APIRouter(prefix="/api/jira", tags=["Jira Integration"])
 oauth_states = {}
 
 
-def get_current_user_id() -> str:
-    """Mock user ID - replace with actual auth in production"""
-    # TODO: Integrate with your auth system
-    return "default_user"
-
-
 @router.get("/connect")
-async def initiate_jira_oauth(user_id: str = Depends(get_current_user_id)):
+async def initiate_jira_oauth(current_user: dict = Depends(get_current_user)):
     """
     Initiate Jira OAuth flow
     
     Returns authorization URL for user to login to Jira
     """
+    user_id = current_user['id']
     state = secrets.token_urlsafe(32)
     oauth_states[state] = user_id
     
@@ -118,8 +115,9 @@ async def jira_oauth_callback(
 
 
 @router.get("/status", response_model=JiraConnectionStatus)
-async def get_jira_status(user_id: str = Depends(get_current_user_id)):
+async def get_jira_status(current_user: dict = Depends(get_current_user)):
     """Check if user has connected Jira"""
+    user_id = current_user['id']
     credentials = await jira_service.get_credentials(user_id)
     
     if not credentials:
@@ -139,8 +137,9 @@ async def get_jira_status(user_id: str = Depends(get_current_user_id)):
 
 
 @router.delete("/disconnect")
-async def disconnect_jira(user_id: str = Depends(get_current_user_id)):
+async def disconnect_jira(current_user: dict = Depends(get_current_user)):
     """Disconnect Jira integration for user"""
+    user_id = current_user['id']
     try:
         await jira_service.delete_credentials(user_id)
         logger.info(f"Jira disconnected for user {user_id}")
@@ -154,7 +153,7 @@ async def disconnect_jira(user_id: str = Depends(get_current_user_id)):
 async def create_jira_ticket(
     ticket_data: JiraTicketCreate,
     case_id: Optional[str] = None,
-    user_id: str = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user)
 ):
     """
     Create Jira ticket from a compliance violation
@@ -186,9 +185,10 @@ async def create_jira_ticket(
 @router.post("/tickets/{ticket_id}/sync")
 async def sync_jira_ticket(
     ticket_id: str,
-    user_id: str = Depends(get_current_user_id)
+    current_user: dict = Depends(get_current_user)
 ):
     """Sync Jira ticket status back to our database"""
+    user_id = current_user['id']
     try:
         result = await jira_service.sync_ticket_status(
             user_id=user_id,
@@ -210,9 +210,10 @@ async def sync_jira_ticket(
 @router.get("/tickets")
 async def get_user_jira_tickets(
     case_id: Optional[str] = None,
-    user_id: str = Depends(get_current_user_id)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get all Jira tickets for current user, optionally filtered by case"""
+    user_id = current_user['id']
     tickets = await jira_service.get_user_tickets(
         user_id=user_id,
         case_id=case_id
@@ -227,9 +228,10 @@ async def bulk_create_tickets(
     project_key: str,
     issue_type: str = "Bug",
     priority: str = "Medium",
-    user_id: str = Depends(get_current_user_id)
+    current_user: dict = Depends(get_current_user)
 ):
     """Create Jira tickets for all approved violations in a case"""
+    user_id = current_user['id']
     from app.database import db
     
     # Get all violations for case that need tickets

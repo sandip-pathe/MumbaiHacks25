@@ -29,7 +29,7 @@ timeout /t 3 /nobreak >nul
 
 REM Start Frontend
 echo [4/4] Starting Frontend...
-start "Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
+start "Frontend" cmd /k "cd /d %~dp0frontend-main && npm run dev"
 
 echo.
 echo ============================================

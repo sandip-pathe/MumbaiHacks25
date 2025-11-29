@@ -1,39 +1,30 @@
+"""
+Authentication API endpoints
+"""
 import os
 import requests
-from fastapi import APIRouter, HTTPException, Request, Body, Query
+from fastapi import APIRouter, HTTPException, Request, Body, Query, Header, Depends
 from pydantic import BaseModel, EmailStr
-from jose import jwt
+from typing import Optional
+from loguru import logger
 
 from app.config import get_settings
+from app.services.auth_service import auth_service
+
 settings = get_settings()
-NEON_DATA_API_URL = settings.neon_data_api_url
-NEON_API_KEY = settings.neon_api_key
-STACK_JWKS_URL = settings.stack_jwks_url
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# --- GitHub OAuth Authorization URL ---
-@router.post("/github/authorize")
-def github_authorize(redirect_uri: str = Body(...), state: str = Body(None)):
-    """
-    Returns the GitHub OAuth authorization URL for the frontend to redirect the user.
-    """
-    settings = get_settings()
-    github_client_id = settings.github_oauth_client_id
-    base_url = "https://github.com/login/oauth/authorize"
-    params = {
-        "client_id": github_client_id,
-        "redirect_uri": redirect_uri,
-        "state": state or "",
-        "scope": "repo user"
-    }
-    from urllib.parse import urlencode
-    auth_url = f"{base_url}?{urlencode(params)}"
-    return {"authorization_url": auth_url}
 
-class UserCreate(BaseModel):
+# --- Pydantic Models ---
+class UserRegister(BaseModel):
     email: EmailStr
     password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    company_name: Optional[str] = None
+    company_type: Optional[str] = None
+
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -43,13 +34,248 @@ class UserLogin(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    user: dict
 
 
-# --- GitHub OAuth Callback ---
-from fastapi import Query
+class UserResponse(BaseModel):
+    user_id: str
+    email: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    company_name: Optional[str]
+    email_verified: bool
 
 
-from app.config import get_settings
+# --- Helper Functions ---
+async def get_current_user(authorization: str = Header(None)) -> str:
+    """Dependency to get current user from token"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    
+    token = authorization.replace("Bearer ", "")
+    user_id = await auth_service.verify_session(token)
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    return user_id
+
+
+# --- Auth Endpoints ---
+@router.post("/register", response_model=Token)
+async def register(user_data: UserRegister, request: Request):
+    """Register a new user with email and password"""
+    try:
+        # Create user
+        user = await auth_service.create_user(
+            email=user_data.email,
+            password=user_data.password,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+            company_name=user_data.company_name,
+            company_type=user_data.company_type
+        )
+        
+        # Create access token
+        access_token = auth_service.create_access_token(user['user_id'])
+        
+        # Create session
+        user_agent = request.headers.get("user-agent")
+        ip_address = request.client.host if request.client else None
+        await auth_service.create_session(
+            user['user_id'],
+            access_token,
+            user_agent=user_agent,
+            ip_address=ip_address
+        )
+        
+        logger.info(f"User registered: {user_data.email}")
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user['user_id'],
+                "user_id": user['user_id'],
+                "email": user['email'],
+                "first_name": user['first_name'],
+                "last_name": user['last_name']
+            }
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Registration error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Registration failed")
+
+
+@router.post("/login", response_model=Token)
+async def login(credentials: UserLogin, request: Request):
+    """Login with email and password"""
+    try:
+        # Authenticate user
+        user = await auth_service.authenticate_user(
+            credentials.email,
+            credentials.password
+        )
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Create access token
+        access_token = auth_service.create_access_token(user['user_id'])
+        
+        # Create session
+        user_agent = request.headers.get("user-agent")
+        ip_address = request.client.host if request.client else None
+        await auth_service.create_session(
+            user['user_id'],
+            access_token,
+            user_agent=user_agent,
+            ip_address=ip_address
+        )
+        
+        logger.info(f"User logged in: {credentials.email}")
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user['user_id'],
+                "user_id": user['user_id'],
+                "email": user['email'],
+                "first_name": user.get('first_name'),
+                "last_name": user.get('last_name')
+            }
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Login failed")
+
+
+@router.post("/logout")
+async def logout(authorization: str = Header(None)):
+    """Logout and invalidate session"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    
+    token = authorization.replace("Bearer ", "")
+    await auth_service.invalidate_session(token)
+    
+    return {"message": "Logged out successfully"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_info(user_id: str = Depends(get_current_user)):
+    """Get current user information"""
+    user = await auth_service.get_user(user_id)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return UserResponse(**user)
+
+
+# --- GitHub OAuth Integration ---
+@router.get("/github/callback")
+async def github_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Handle GitHub OAuth callback and link to authenticated user
+    """
+    try:
+        settings = get_settings()
+        
+        # Exchange code for access token
+        token_url = "https://github.com/login/oauth/access_token"
+        headers = {"Accept": "application/json"}
+        data = {
+            "client_id": settings.github_oauth_client_id,
+            "client_secret": settings.github_oauth_client_secret,
+            "code": code,
+        }
+        
+        resp = requests.post(token_url, headers=headers, data=data)
+        if not resp.ok:
+            raise HTTPException(status_code=400, detail="Failed to exchange GitHub code")
+        
+        token_data = resp.json()
+        
+        if "error" in token_data:
+            raise HTTPException(status_code=400, detail=token_data.get('error_description', 'GitHub OAuth error'))
+        
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No access token from GitHub")
+        
+        # Get GitHub user info
+        user_resp = requests.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        
+        if not user_resp.ok:
+            raise HTTPException(status_code=400, detail="Failed to get GitHub user info")
+        
+        github_user = user_resp.json()
+        
+        # Store OAuth connection
+        await auth_service.store_oauth_connection(
+            user_id=user_id,
+            provider="github",
+            access_token=access_token,
+            provider_user_id=str(github_user.get('id')),
+            provider_username=github_user.get('login'),
+            scopes=token_data.get('scope', '').split(',') if token_data.get('scope') else [],
+            metadata={
+                "avatar_url": github_user.get('avatar_url'),
+                "name": github_user.get('name'),
+                "bio": github_user.get('bio'),
+                "public_repos": github_user.get('public_repos')
+            }
+        )
+        
+        logger.info(f"GitHub connected for user {user_id}: {github_user.get('login')}")
+        
+        return {
+            "success": True,
+            "provider": "github",
+            "username": github_user.get('login'),
+            "access_token": access_token
+        }
+    
+    except Exception as e:
+        logger.error(f"GitHub OAuth callback error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/github/status")
+async def get_github_status(user_id: str = Depends(get_current_user)):
+    """Check if user has connected GitHub"""
+    connection = await auth_service.get_oauth_connection(user_id, "github")
+    
+    if not connection:
+        return {"connected": False}
+    
+    return {
+        "connected": True,
+        "username": connection.get('provider_username'),
+        "connected_at": connection.get('created_at')
+    }
+
+
+@router.delete("/github/disconnect")
+async def disconnect_github(user_id: str = Depends(get_current_user)):
+    """Disconnect GitHub OAuth"""
+    await auth_service.delete_oauth_connection(user_id, "github")
+    return {"message": "GitHub disconnected successfully"}
 
 @router.get("/github/callback")
 def github_callback(code: str = Query(...), state: str = Query(None), redirect_uri: str = Query(None)):
@@ -130,40 +356,3 @@ def verify_stack_auth_token(token: str):
     except Exception:
         return None
 
-@router.post("/signup", response_model=Token)
-def signup(user: UserCreate):
-    # Check if user exists
-    sql = "SELECT user_id FROM users WHERE email = $1"
-    result = neon_query(sql, [user.email])
-    if result["results"]:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    # Insert user
-    user_id = user.email  # Use email as user_id for Stack Auth
-    sql = "INSERT INTO users (user_id, email, password) VALUES ($1, $2, $3) RETURNING user_id"
-    neon_query(sql, [user_id, user.email, user.password])
-    token = issue_stack_auth_token(user_id)
-    return Token(access_token=token)
-
-@router.post("/login", response_model=Token)
-def login(user: UserLogin):
-    sql = "SELECT user_id, password FROM users WHERE email = $1"
-    result = neon_query(sql, [user.email])
-    if not result["results"]:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    db_user = result["results"][0]
-    if db_user["password"] != user.password:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = issue_stack_auth_token(db_user["user_id"])
-    return Token(access_token=token)
-
-@router.get("/me")
-def get_me(request: Request):
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    user_id = verify_stack_auth_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    sql = "SELECT email FROM users WHERE user_id = $1"
-    result = neon_query(sql, [user_id])
-    if not result["results"]:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"email": result["results"][0]["email"]}

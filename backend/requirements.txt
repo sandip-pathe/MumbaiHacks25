@@ -12,13 +12,15 @@ psycopg[binary]==3.2.3
 pgvector==0.3.5
 alembic==1.13.1
 
+# Auth & Security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+PyJWT==2.8.0
+cryptography==42.0.0
+
 # Redis
 redis==5.0.1
 rq==1.16.1
-
-# GitHub integration
-PyJWT==2.8.0
-cryptography==42.0.0
 
 # Code parsing
 tree-sitter==0.20.4

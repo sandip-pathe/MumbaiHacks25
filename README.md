@@ -1,10 +1,12 @@
-# Fintech Compliance Engine
+# ReguPulse - AI Compliance Engine
 
 Production-grade compliance automation platform for fintech companies. Analyzes code repositories against RBI regulations using AST-aware parsing, vector embeddings, and LLM reasoning.
 
 ## Architecture
 
 **Tech Stack:**
+
+**Backend:**
 - FastAPI (async Python 3.11+)
 - Neon Postgres + pgvector
 - Redis (caching + job queue)
@@ -12,6 +14,13 @@ Production-grade compliance automation platform for fintech companies. Analyzes 
 - Azure Blob Storage
 - Tree-sitter (AST parsing)
 - GitHub App integration
+
+**Frontend:**
+- React 19 + TypeScript
+- Vite (build tool & dev server)
+- Tailwind CSS
+- Lucide React (icons)
+- Recharts (data visualization)
 
 **Pipeline:**
 1. GitHub App → Webhook → Clone repo → Parse code
@@ -24,8 +33,34 @@ Production-grade compliance automation platform for fintech companies. Analyzes 
 
 ### Prerequisites
 - Python 3.11+
+- Node.js 18+
 - Docker & Docker Compose
 - GitHub App (optional for full flow)
+
+### One-Command Startup
+
+**Windows:**
+```bash
+START_ALL.bat
+```
+
+**Linux/Mac:**
+```bash
+chmod +x start-all.sh
+./start-all.sh
+```
+
+This will start:
+- ✅ Redis (Docker)
+- ✅ Backend API (http://localhost:8000)
+- ✅ Worker (background process)
+- ✅ Frontend (http://localhost:3000)
+
+### Access Points
+- **Frontend UI:** http://localhost:3000
+- **Backend API:** http://localhost:8000
+- **API Docs:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
 
 ## Setup Options
 
